@@ -1,219 +1,131 @@
-from yt_dlp import YoutubeDL
 import os
-import sys
 import platform
-import subprocess
+import ssl
+import urllib.request
 import zipfile
 import tarfile
-import urllib.request
-import ssl
+import shutil
+import subprocess
+from yt_dlp import YoutubeDL
 
-def get_base_path():
-    """Get the base path - works for both script and executable."""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    else:
-        return os.path.dirname(os.path.abspath(__file__))
-
-def get_ffmpeg_paths():
-    """Get platform-specific FFmpeg paths."""
-    base_path = get_base_path()
-    system = platform.system()
-    
-    if system == "Windows":
-        ffmpeg_dir = os.path.join(base_path, "ffmpeg", "ffmpeg-7.1-essentials_build", "bin")
-        ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe")
-        return ffmpeg_exe, ffmpeg_dir
-    elif system == "Darwin":
-        ffmpeg_dir = os.path.join(base_path, "ffmpeg", "bin")
-        ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg")
-        return ffmpeg_exe, ffmpeg_dir
-    else:
-        ffmpeg_dir = os.path.join(base_path, "ffmpeg", "bin")
-        ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg")
-        return ffmpeg_exe, ffmpeg_dir
 
 def check_ffmpeg():
-    """Check if ffmpeg is installed and available."""
-    ffmpeg_exe, ffmpeg_dir = get_ffmpeg_paths()
-    
-    if os.path.exists(ffmpeg_exe):
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-        print(f"Using FFmpeg from: {ffmpeg_exe}")
-        return ffmpeg_exe
-    else:
-        try:
-            result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                print("Using system FFmpeg")
-                return "ffmpeg"
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-        
-        print("FFmpeg not found. Attempting to install...")
-        install_ffmpeg()
-        
-        if os.path.exists(ffmpeg_exe):
-            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-            print(f"Using FFmpeg from: {ffmpeg_exe}")
-            return ffmpeg_exe
-        else:
-            raise Exception("Failed to install FFmpeg. Please install it manually.")
-
-def install_ffmpeg():
-    """Automatically download and install FFmpeg based on the OS."""
-    base_path = get_base_path()
-    ffmpeg_exe, _ = get_ffmpeg_paths()
-    
-    if os.path.exists(ffmpeg_exe):
-        print("FFmpeg is already installed.")
-        return
-    
-    system = platform.system()
-    print(f"FFmpeg is missing. Downloading for {system}...")
-    
-    try:
-        if system == "Windows":
-            install_ffmpeg_windows(base_path)
-        elif system == "Darwin":
-            install_ffmpeg_mac(base_path)
-        else:
-            install_ffmpeg_linux(base_path)
-    except Exception as e:
-        print(f"Error installing FFmpeg: {e}")
-        if system == "Darwin":
-            print("  Run: brew install ffmpeg")
-        elif system == "Linux":
-            print("  Run: sudo apt install ffmpeg  (Ubuntu/Debian)")
-            print("  Or:  sudo yum install ffmpeg  (CentOS/RHEL)")
-        else:
-            print("  Visit: https://ffmpeg.org/download.html")
-        raise
-
-def install_ffmpeg_windows(base_path):
-    """Install FFmpeg on Windows."""
-    import tempfile
-    import shutil
-
-    ffmpeg_dir = os.path.join(base_path, "ffmpeg")
-    ffmpeg_zip = os.path.join(tempfile.gettempdir(), "ffmpeg.zip")
-    ffmpeg_url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-
-    print("Downloading FFmpeg for Windows...")
-    subprocess.run([
-        "powershell", "-Command",
-        f"Invoke-WebRequest -Uri {ffmpeg_url} -OutFile {ffmpeg_zip}"
-    ], check=True)
-
-    print("Extracting FFmpeg...")
-    with zipfile.ZipFile(ffmpeg_zip, 'r') as zip_ref:
-        zip_ref.extractall(ffmpeg_dir)
-
-    if os.path.exists(ffmpeg_zip):
-        os.remove(ffmpeg_zip)
-    print("FFmpeg installed successfully.")
-
-def install_ffmpeg_mac(base_path):
-    """Install FFmpeg on macOS, handling SSL cert issues and Homebrew fallback."""
+    """Ensure FFmpeg is installed and return the path."""
+    base_path = os.path.dirname(os.path.abspath(__file__))
     ffmpeg_dir = os.path.join(base_path, "ffmpeg", "bin")
     os.makedirs(ffmpeg_dir, exist_ok=True)
-    ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg")
 
-    # Try Homebrew first
-    try:
-        subprocess.run(["brew", "--version"], capture_output=True, check=True, timeout=5)
-        print("Installing FFmpeg via Homebrew...")
-        subprocess.run(["brew", "install", "ffmpeg"], check=True)
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    system = platform.system()
+    exe = "ffmpeg.exe" if system == "Windows" else "ffmpeg"
+    ffmpeg_path = os.path.join(ffmpeg_dir, exe)
 
-    # SSL workaround
+    if os.path.exists(ffmpeg_path):
+        print(f"FFmpeg already installed: {ffmpeg_path}")
+        return ffmpeg_path
+
+    print("FFmpeg not found. Attempting to install...")
+
+    # SSL fix for macOS certificate issue
     try:
         ssl.create_default_context()
     except ssl.SSLError:
+        print("SSL certificate issue detected. Using unverified context...")
         ssl._create_default_https_context = ssl._create_unverified_context
 
-    arch = platform.machine()
-    ffmpeg_url = "https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip"
-    ffmpeg_zip = os.path.join(base_path, "ffmpeg.zip")
-
-    print(f"Downloading FFmpeg from {ffmpeg_url} ...")
-    urllib.request.urlretrieve(ffmpeg_url, ffmpeg_zip)
-
-    print("Extracting FFmpeg...")
-    with zipfile.ZipFile(ffmpeg_zip, 'r') as zip_ref:
-        zip_ref.extractall(ffmpeg_dir)
-
-    if os.path.exists(ffmpeg_exe):
-        os.chmod(ffmpeg_exe, 0o755)
-    os.remove(ffmpeg_zip)
-    print("FFmpeg installed successfully on macOS.")
-
-def install_ffmpeg_linux(base_path):
-    """Install FFmpeg on Linux."""
-    print("Attempting to install FFmpeg via package manager...")
     try:
-        subprocess.run(["sudo", "apt", "install", "-y", "ffmpeg"], check=True, timeout=300)
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    try:
-        subprocess.run(["sudo", "yum", "install", "-y", "ffmpeg"], check=True, timeout=300)
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    raise Exception("Could not install FFmpeg automatically on Linux")
+        if system == "Windows":
+            url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+            zip_path = os.path.join(base_path, "ffmpeg.zip")
+            urllib.request.urlretrieve(url, zip_path)
 
-def download_video(url, save_path='.'):
-    try:
-        print("Checking for FFmpeg...")
-        ffmpeg_path = check_ffmpeg()
-        print(f"FFmpeg path: {ffmpeg_path}")
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                for member in zip_ref.namelist():
+                    if member.endswith("ffmpeg.exe"):
+                        zip_ref.extract(member, ffmpeg_dir)
+                        src = os.path.join(ffmpeg_dir, member)
+                        shutil.move(src, ffmpeg_path)
+                        break
+            os.remove(zip_path)
 
-        save_path = os.path.abspath(save_path)
-        if not os.path.exists(save_path):
-            print(f"Creating directory: {save_path}")
-            os.makedirs(save_path)
+        elif system == "Darwin":  # macOS
+            url = "https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip"
+            zip_path = os.path.join(base_path, "ffmpeg.zip")
+            urllib.request.urlretrieve(url, zip_path)
 
-        options = {
-            'format': 'bestvideo+bestaudio/best',
-            'merge_output_format': 'mp4',
-            'ffmpeg_location': ffmpeg_path,
-            'outtmpl': os.path.join(save_path, '%(title)s.%(ext)s'),
-            'verbose': True,
-        }
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                for member in zip_ref.namelist():
+                    if member.endswith("ffmpeg"):
+                        zip_ref.extract(member, ffmpeg_dir)
+                        src = os.path.join(ffmpeg_dir, member)
+                        shutil.move(src, ffmpeg_path)
+                        break
+            os.chmod(ffmpeg_path, 0o755)
+            os.remove(zip_path)
 
-        print("Starting download with options:", options)
-        with YoutubeDL(options) as ydl:
-            ydl.download([url])
-        print(f"Download complete! Video saved to: {save_path}")
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        import traceback
-        traceback.print_exc()
+        else:  # Linux
+            url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+            tar_path = os.path.join(base_path, "ffmpeg.tar.xz")
+            urllib.request.urlretrieve(url, tar_path)
 
-if __name__ == "__main__":
-    try:
-        print(f"YouTube Downloader Starting on {platform.system()}...")
+            with tarfile.open(tar_path, "r:xz") as tar_ref:
+                for member in tar_ref.getmembers():
+                    if member.name.endswith("/ffmpeg"):
+                        tar_ref.extract(member, ffmpeg_dir)
+                        src = os.path.join(ffmpeg_dir, os.path.basename(member.name))
+                        shutil.move(src, ffmpeg_path)
+                        break
+            os.chmod(ffmpeg_path, 0o755)
+            os.remove(tar_path)
 
-        video_url = input("Enter the YouTube video URL: ").strip()
-        output_path = input(
-            "Enter the folder path to save the video or press Enter for default (Downloads folder): "
-        ).strip()
-
-        if not output_path:
-            output_path = os.path.expanduser("~/Downloads")
-
-        print(f"Downloading video from: {video_url}")
-        print(f"Saving to: {output_path}")
-
-        download_video(video_url, output_path)
-        print("Program completed successfully.")
+        if os.path.exists(ffmpeg_path):
+            print(f"FFmpeg installed successfully: {ffmpeg_path}")
+            return ffmpeg_path
+        else:
+            raise Exception("FFmpeg install failed.")
 
     except Exception as e:
+        print(f"Error installing FFmpeg: {e}")
+        raise Exception("Failed to install FFmpeg. Please install it manually.")
+
+
+def download_video(url, output_folder):
+    """Download YouTube video using yt_dlp with local FFmpeg."""
+    ffmpeg_path = check_ffmpeg()
+
+    ydl_opts = {
+        "format": "best",
+        "outtmpl": os.path.join(output_folder, "%(title)s.%(ext)s"),
+        "ffmpeg_location": os.path.dirname(ffmpeg_path),  # point to local ffmpeg/bin
+    }
+
+    with YoutubeDL(ydl_opts) as ydl:
+        print(f"Downloading video from: {url}")
+        ydl.download([url])
+
+
+def main():
+    system = platform.system()
+    print(f"YouTube Downloader Starting on {system}...")
+
+    url = input("Enter the YouTube video URL: ").strip()
+    if not url:
+        print("No URL provided. Exiting.")
+        return
+
+    save_path = input("Enter the folder path to save the video or press Enter for default (Downloads folder): ").strip()
+    if not save_path:
+        save_path = os.path.join(os.path.expanduser("~"), "Downloads")
+
+    print(f"Saving to: {save_path}")
+
+    try:
+        download_video(url, save_path)
+        print("Download completed successfully!")
+    except Exception as e:
         print(f"An error occurred: {e}")
-        import traceback
-        traceback.print_exc()
 
     input("\nPress Enter to exit...")
+
+
+if __name__ == "__main__":
+    main()
